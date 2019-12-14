@@ -1563,6 +1563,249 @@ inline void AdamUpdateEx(const nnvm::NodeAttrs& attrs,
   }
 }
 
+struct ClipAdamUpdateKernel {
+  template<typename DType>
+  MSHADOW_XINLINE static void Map(int i, DType* out_data,
+    DType* mean_data, DType* var_data, const DType* weight_data, const DType* grad_data, DType* auto_clip_data,
+    const DType clip_gradient, const DType rescale_grad,
+    const DType beta1, const DType beta2,
+    const DType lr, const DType wd,
+    const DType epsilon, const OpReqType req) {
+    using namespace mshadow_op;
+
+    DType grad_rescaled = grad_data[i] * rescale_grad + weight_data[i] * wd;
+    if (clip_gradient >= 0.f) {
+      if (auto_clip_data[i] <= 0.f) {
+        auto_clip_data[i] = clip_gradient;
+      }
+      grad_rescaled = clip::Map(grad_rescaled, auto_clip_data[i]);
+    }
+
+    mean_data[i] = beta1 * mean_data[i] + (1.f - beta1) * grad_rescaled;
+    var_data[i] = beta2 * var_data[i] +
+                        (1.f - beta2) * grad_rescaled * grad_rescaled;
+    auto_clip_data[i] = beta1 * auto_clip_data[i] + (1.f - beta1) * grad_rescaled;
+    KERNEL_ASSIGN(out_data[i], req, weight_data[i] - lr * mean_data[i] /
+                  (square_root::Map(var_data[i]) + epsilon));
+  }
+};
+
+template<typename xpu>
+inline void ClipAdamUpdate(const nnvm::NodeAttrs& attrs,
+                       const OpContext &ctx,
+                       const std::vector<TBlob> &inputs,
+                       const std::vector<OpReqType> &req,
+                       const std::vector<TBlob> &outputs) {
+  using namespace mxnet_op;
+  const AdamParam& param = nnvm::get<AdamParam>(attrs.parsed);
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+  MSHADOW_REAL_TYPE_SWITCH(inputs[0].type_flag_, DType, {
+    Tensor<xpu, 2, DType> weight = inputs[0].FlatTo2D<xpu, DType>(s);
+    Tensor<xpu, 2, DType> grad = inputs[1].FlatTo2D<xpu, DType>(s);
+    Tensor<xpu, 2, DType> mean = inputs[2].FlatTo2D<xpu, DType>(s);
+    Tensor<xpu, 2, DType> var = inputs[3].FlatTo2D<xpu, DType>(s);
+    Tensor<xpu, 2, DType> auto_clip = inputs[4].FlatTo2D<xpu, DType>(s);
+    Tensor<xpu, 2, DType> out = outputs[0].FlatTo2D<xpu, DType>(s);
+
+    Kernel<ClipAdamUpdateKernel, xpu>::Launch(s, weight.shape_.Size(),
+          out.dptr_, mean.dptr_, var.dptr_, weight.dptr_, grad.dptr_, auto_clip.dptr_, 
+          static_cast<DType>(param.clip_gradient), static_cast<DType>(param.rescale_grad),
+          static_cast<DType>(param.beta1), static_cast<DType>(param.beta2),
+          static_cast<DType>(param.lr), static_cast<DType>(param.wd),
+          static_cast<DType>(param.epsilon), req[0]);
+  });
+}
+
+template<int req, typename xpu>
+struct ClipAdamDnsRspDnsKernel;
+
+/*!
+ * Note: this kernel performs sparse adam update. For each row-slice in row_sparse
+ * gradient, it finds the corresponding elements in weight, mean and var and performs
+ * the update.
+ * The kernel assumes dense weight/mean/var, and row_sparse gradient
+ */
+template<int req>
+struct ClipAdamDnsRspDnsKernel<req, cpu> {
+  template<typename DType, typename IType>
+  MSHADOW_XINLINE static void Map(int i, const nnvm::dim_t row_length, DType* out_data,
+    DType* mean_data, DType* var_data, const DType* weight_data, const IType* grad_idx,
+    const DType* grad_data, const DType clip_gradient, const DType beta1, const DType beta2,
+    const DType lr, const DType wd, const DType epsilon, const DType rescale_grad) {
+    using nnvm::dim_t;
+    using namespace mshadow_op;
+    const dim_t row_offset = grad_idx[i] * row_length;
+    for (dim_t j = 0; j < row_length; j++) {
+      // index in data/mean/var
+      const dim_t data_i = row_offset + j;
+      // index in grad
+      const dim_t grad_i = i * row_length + j;
+      const DType grad_rescaled = grad_data[grad_i] * rescale_grad + weight_data[data_i] * wd;
+      
+      if (clip_gradient >= 0.0f) {
+        if (auto_clip_data[i] <= 0.0f) {
+          auto_clip_data[i] = clip_gradient;
+        }
+        grad_rescaled = clip::Map(grad_rescaled, auto_clip_data[i]);
+      }
+      mean_data[data_i] = beta1 * mean_data[data_i] + (1.f - beta1) * grad_rescaled;
+      var_data[data_i] = beta2 * var_data[data_i] +
+                       (1.f - beta2) * grad_rescaled * grad_rescaled;
+      auto_clip_data[i] = beta1 * auto_clip_data[i] + (1.f - beta1) * grad_rescaled;
+      KERNEL_ASSIGN(out_data[data_i], req, weight_data[data_i] - lr * mean_data[data_i] /
+                    (square_root::Map(var_data[data_i]) + epsilon));
+    }
+  }
+};
+
+
+template<int req>
+struct AdamDnsRspDnsKernel<req, gpu> {
+  template<typename DType, typename IType>
+  MSHADOW_XINLINE static void Map(int i, const nnvm::dim_t row_length, DType* out_data,
+    DType* mean_data, DType* var_data, DType* auto_clip_data, const DType* weight_data, const IType* grad_idx,
+    const DType* grad_data, const DType clip_gradient, const DType beta1, const DType beta2,
+    const DType lr, const DType wd, const DType epsilon, const DType rescale_grad) {
+    using nnvm::dim_t;
+    using namespace mshadow_op;
+    const dim_t row_id = i / row_length;
+    const dim_t col_id = i % row_length;
+    const dim_t row_offset = grad_idx[row_id] * row_length;
+    // index in data/mean/var
+    const dim_t data_i = row_offset + col_id;
+    // index in grad
+    DType grad_rescaled = grad_data[i] * rescale_grad + weight_data[data_i] * wd;
+    if (clip_gradient >= 0.0f) {
+      if (auto_clip_data[i] <= 0.0f) {
+        auto_clip_data[i] = clip_gradient;
+      }
+      grad_rescaled = clip::Map(grad_rescaled, auto_clip_data[i]);
+    }
+    mean_data[data_i] = beta1 * mean_data[data_i] + (1.f - beta1) * grad_rescaled;
+    var_data[data_i] = beta2 * var_data[data_i] +
+                       (1.f - beta2) * grad_rescaled * grad_rescaled;
+    auto_clip_data[i] = beta1 * auto_clip_data[i] + (1.f - beta1) * grad_rescaled;
+    KERNEL_ASSIGN(out_data[data_i], req, weight_data[data_i] - lr * mean_data[data_i] /
+                  (square_root::Map(var_data[data_i]) + epsilon));
+  }
+};
+
+/*
+ * \brief lazy adam update for dense weight, dense states and rsp grad.
+ */
+template<typename xpu>
+inline void ClipAdamLazyUpdateDnsRspDnsImpl(const AdamParam& param,
+                                        const OpContext& ctx,
+                                        const TBlob& weight,
+                                        const NDArray& grad,
+                                        const TBlob& mean,
+                                        const TBlob& var,
+                                        const TBlob& auto_clip,
+                                        const OpReqType& req,
+                                        TBlob *out) {
+  using namespace mxnet_op;
+  using namespace rowsparse;
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+  if (!grad.storage_initialized() || req == kNullOp) return;
+  CHECK_EQ(req, kWriteInplace) << "kWriteInplace is expected for sparse adam_update";
+  CHECK_GT(weight.shape_.Size(), 0);
+  CHECK_GT(mean.shape_.Size(), 0);
+  CHECK_GT(var.shape_.Size(), 0);
+
+  MSHADOW_REAL_TYPE_SWITCH(weight.type_flag_, DType, {
+    MSHADOW_IDX_TYPE_SWITCH(grad.aux_type(kIdx), IType, {
+      MXNET_ASSIGN_REQ_SWITCH(req, req_type, {
+        const DType* weight_data = weight.dptr<DType>();
+        const IType* grad_idx = grad.aux_data(kIdx).dptr<IType>();
+        const DType* grad_val = grad.data().dptr<DType>();
+        DType* mean_data = mean.dptr<DType>();
+        DType* var_data = var.dptr<DType>();
+        DType* auto_clip_data = auto_clip.dptr<DType>();
+        DType* out_data = out->dptr<DType>();
+        nnvm::dim_t num_rows = grad.aux_shape(kIdx)[0];
+        const auto row_length = weight.shape_.ProdShape(1, weight.ndim());
+        size_t num_threads = num_rows;
+        if (std::is_same<xpu, gpu>::value) {
+          num_threads = num_rows * row_length;
+        }
+        Kernel<AdamDnsRspDnsKernel<req_type, xpu>, xpu>::Launch(s, num_threads,
+          row_length, out_data, mean_data, var_data, auto_clip_data, weight_data, grad_idx, grad_val,
+          static_cast<DType>(param.clip_gradient), static_cast<DType>(param.beta1),
+          static_cast<DType>(param.beta2), static_cast<DType>(param.lr),
+          static_cast<DType>(param.wd), static_cast<DType>(param.epsilon),
+          static_cast<DType>(param.rescale_grad));
+      });
+    });
+  });
+}
+
+/*
+ * \brief lazy adam update for both row_sparse and dense weight.
+ *        grad is expected to be row_sparse.
+ */
+template<typename xpu>
+inline void ClipAdamLazyUpdateRspImpl(const AdamParam& param,
+                                  const OpContext& ctx,
+                                  const NDArray& weight,
+                                  const NDArray& grad,
+                                  const NDArray& mean,
+                                  const NDArray& var,
+                                  const NDArray& auto_clip,
+                                  const OpReqType& req,
+                                  NDArray *out) {
+  using namespace mxnet_op;
+  using namespace rowsparse;
+  CheckAllRowsPresent(weight, "AdamUpdate", "weights");
+  Stream<xpu>* s = ctx.get_stream<xpu>();
+  // fill mean and variance with zero values in order to reuse the sgd mom dns impl
+  if (mean.storage_type() == kRowSparseStorage && !mean.storage_initialized()) {
+    NDArray mean_zeros = mean;
+    FillDnsZerosRspImpl(s, &mean_zeros);
+  }
+  if (var.storage_type() == kRowSparseStorage && !var.storage_initialized()) {
+    NDArray var_zeros = var;
+    FillDnsZerosRspImpl(s, &var_zeros);
+  }
+  if (auto_clip.storage_type() == kRowSparseStorage && !auto_clip.storage_initialized()) {
+    NDArray auto_clip_zeros = auto_clip;
+    FillDnsZerosRspImpl(s, &auto_clip_zeros);
+  }
+  TBlob out_blob = out->data();
+  // reuse dns rsp implementation when storage_shape == shape
+  AdamLazyUpdateDnsRspDnsImpl<xpu>(param, ctx, weight.data(), grad, mean.data(),
+                                   var.data(), auto_clip.data(), req, &out_blob);
+}
+
+template<typename xpu>
+inline void ClipAdamUpdateEx(const nnvm::NodeAttrs& attrs,
+                         const OpContext &ctx,
+                         const std::vector<NDArray> &inputs,
+                         const std::vector<OpReqType> &req,
+                         const std::vector<NDArray> &outputs) {
+  const AdamParam& param = nnvm::get<AdamParam>(attrs.parsed);
+  const auto w_stype = inputs[0].storage_type();
+  const auto g_stype = inputs[1].storage_type();
+  const auto m_stype = inputs[2].storage_type();
+  const auto v_stype = inputs[3].storage_type();
+  const auto c_stype = inputs[4].storage_type();
+  const auto out_stype = outputs[0].storage_type();
+  NDArray out = outputs[0];
+  const bool valid_weight = w_stype == kDefaultStorage || w_stype == kRowSparseStorage;
+  CHECK(w_stype == out_stype) << "Inconsistent weight stype and output stype";
+  CHECK(m_stype == v_stype) << "Inconsistent mean stype and var stype";
+  if (valid_weight && g_stype == kRowSparseStorage && m_stype == w_stype) {
+     if (param.lazy_update) {
+       // rsp grad && m.stype = w.stype && lazy_update = true -> lazy update
+       ClipAdamLazyUpdateRspImpl<xpu>(param, ctx, inputs[0], inputs[1], inputs[2],
+                                  inputs[3], inputs[4], req[0], &out);
+     } 
+  } else {
+    LogUnimplementedOp(attrs, ctx, inputs, req, outputs);
+  }
+}
+
+
+
 struct LambUpdatePhaseOneParam : public dmlc::Parameter<LambUpdatePhaseOneParam> {
     float beta1;
     float beta2;

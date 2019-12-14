@@ -1090,5 +1090,59 @@ it performs the following operations and updates grad.
 .add_argument("weight32", "NDArray-or-Symbol", "Weight32")
 .add_arguments(LambUpdatePhaseTwoParam::__FIELDS__());
 
+NNVM_REGISTER_OP(clip_adam_update)
+MXNET_ADD_SPARSE_OP_ALIAS(clip_adam_update)
+.describe(R"code(Update function for Adam optimizer. Adam is seen as a generalization
+of AdaGrad.
+
+Adam update consists of the following steps, where g represents gradient and m, v
+are 1st and 2nd order moment estimates (mean and variance).
+
+.. math::
+
+ g_t = \nabla J(W_{t-1})\\
+ m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t\\
+ v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2\\
+ W_t = W_{t-1} - \alpha \frac{ m_t }{ \sqrt{ v_t } + \epsilon }
+
+It updates the weights using::
+
+ m = beta1*m + (1-beta1)*grad
+ v = beta2*v + (1-beta2)*(grad**2)
+ w += - learning_rate * m / (sqrt(v) + epsilon)
+
+However, if grad's storage type is ``row_sparse``, ``lazy_update`` is True and the storage
+type of weight is the same as those of m and v,
+only the row slices whose indices appear in grad.indices are updated (for w, m and v)::
+
+ for row in grad.indices:
+     m[row] = beta1*m[row] + (1-beta1)*grad[row]
+     v[row] = beta2*v[row] + (1-beta2)*(grad[row]**2)
+     w[row] += - learning_rate * m[row] / (sqrt(v[row]) + epsilon)
+
+)code" ADD_FILELINE)
+.set_num_inputs(5)
+.set_num_outputs(1)
+.set_attr_parser(ParamParser<AdamParam>)
+.set_attr<mxnet::FInferShape>("FInferShape", ElemwiseShape<5, 1>)
+.set_attr<FResourceRequest>("FResourceRequest",
+  [](const NodeAttrs& attrs) {
+    return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
+  })
+.set_attr<nnvm::FInferType>("FInferType", ElemwiseType<5, 1>)
+.set_attr<FInferStorageType>("FInferStorageType", StdOptStorageType<2, AdamParam>)
+.set_attr<nnvm::FMutateInputs>("FMutateInputs",
+  [](const nnvm::NodeAttrs& attrs) {
+    return std::vector<uint32_t>{2, 3};
+  })
+.set_attr<FCompute>("FCompute<cpu>", ClipAdamUpdate<cpu>)
+.set_attr<FComputeEx>("FComputeEx<cpu>", ClipAdamUpdateEx<cpu>)
+.add_argument("weight", "NDArray-or-Symbol", "Weight")
+.add_argument("grad", "NDArray-or-Symbol", "Gradient")
+.add_argument("mean", "NDArray-or-Symbol", "Moving mean")
+.add_argument("var", "NDArray-or-Symbol", "Moving variance")
+.add_argument("auto_clip", "NDArray-or-Symbol", "Moving clip gradient")
+.add_arguments(AdamParam::__FIELDS__());
+
 }  // namespace op
 }  // namespace mxnet
