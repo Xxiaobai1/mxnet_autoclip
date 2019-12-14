@@ -377,7 +377,7 @@ ifeq ($(NVCC), NONE)
 		NVCC=$(USE_CUDA_PATH)/bin/nvcc
 	endif
 endif
-
+NVCC=/usr/local/cuda-10.1/bin/nvcc
 # Guard against displaying nvcc info messages to users not using CUDA.
 ifeq ($(USE_CUDA), 1)
 	# Get AR version, compare with expected ar version and find bigger and smaller version of the two
@@ -520,7 +520,7 @@ ifeq ($(USE_CUDA), 1)
 	endif
 	# Make sure to add stubs as fallback in order to be able to build
 	# without full CUDA install (especially if run without nvidia-docker)
-	LDFLAGS += -L/usr/local/cuda/lib64/stubs
+	LDFLAGS += -L/usr/local/cuda-10.1/lib64/
 	ifeq ($(USE_NCCL), 1)
 		ifneq ($(USE_NCCL_PATH), NONE)
 			CFLAGS += -I$(USE_NCCL_PATH)/include

@@ -2040,8 +2040,7 @@ class ClipAdam(Optimizer):
                 zeros(weight.shape, weight.context, dtype=weight.dtype,
                       stype=stype),  #variance
                 zeros(weight.shape, weight.context, dtype=weight.dtype,
-                      stype=stype)     #auto-clip
-
+                      stype=stype))     #auto-clip
     def update(self, index, weight, grad, state):
         assert(isinstance(weight, NDArray))
         assert(isinstance(grad, NDArray))
@@ -2078,8 +2077,8 @@ class ClipAdam(Optimizer):
             kwargs['clip_gradient'] = self.clip_gradient
 
         mean, var, auto_clip = state
-        clip_adam_update(weight, grad, mean, var, auto_clip, out=weight,
-                    lazy_update=self.lazy_update, lr=lr, wd=wd, **kwargs)
+        clip_adam_update(weight, grad, mean, var, auto_clip, out=weight, \
+                         lazy_update=self.lazy_update, lr=lr, wd=wd, **kwargs)
         
 
 

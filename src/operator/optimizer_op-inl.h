@@ -1629,7 +1629,7 @@ template<int req>
 struct ClipAdamDnsRspDnsKernel<req, cpu> {
   template<typename DType, typename IType>
   MSHADOW_XINLINE static void Map(int i, const nnvm::dim_t row_length, DType* out_data,
-    DType* mean_data, DType* var_data, const DType* weight_data, const IType* grad_idx,
+    DType* mean_data, DType* var_data, DType* auto_clip_data, const DType* weight_data, const IType* grad_idx,
     const DType* grad_data, const DType clip_gradient, const DType beta1, const DType beta2,
     const DType lr, const DType wd, const DType epsilon, const DType rescale_grad) {
     using nnvm::dim_t;
@@ -1640,7 +1640,7 @@ struct ClipAdamDnsRspDnsKernel<req, cpu> {
       const dim_t data_i = row_offset + j;
       // index in grad
       const dim_t grad_i = i * row_length + j;
-      const DType grad_rescaled = grad_data[grad_i] * rescale_grad + weight_data[data_i] * wd;
+      DType grad_rescaled = grad_data[grad_i] * rescale_grad + weight_data[data_i] * wd;
       
       if (clip_gradient >= 0.0f) {
         if (auto_clip_data[i] <= 0.0f) {
@@ -1660,7 +1660,7 @@ struct ClipAdamDnsRspDnsKernel<req, cpu> {
 
 
 template<int req>
-struct AdamDnsRspDnsKernel<req, gpu> {
+struct ClipAdamDnsRspDnsKernel<req, gpu> {
   template<typename DType, typename IType>
   MSHADOW_XINLINE static void Map(int i, const nnvm::dim_t row_length, DType* out_data,
     DType* mean_data, DType* var_data, DType* auto_clip_data, const DType* weight_data, const IType* grad_idx,
@@ -1728,7 +1728,7 @@ inline void ClipAdamLazyUpdateDnsRspDnsImpl(const AdamParam& param,
         if (std::is_same<xpu, gpu>::value) {
           num_threads = num_rows * row_length;
         }
-        Kernel<AdamDnsRspDnsKernel<req_type, xpu>, xpu>::Launch(s, num_threads,
+        Kernel<ClipAdamDnsRspDnsKernel<req_type, xpu>, xpu>::Launch(s, num_threads,
           row_length, out_data, mean_data, var_data, auto_clip_data, weight_data, grad_idx, grad_val,
           static_cast<DType>(param.clip_gradient), static_cast<DType>(param.beta1),
           static_cast<DType>(param.beta2), static_cast<DType>(param.lr),
@@ -1772,7 +1772,7 @@ inline void ClipAdamLazyUpdateRspImpl(const AdamParam& param,
   }
   TBlob out_blob = out->data();
   // reuse dns rsp implementation when storage_shape == shape
-  AdamLazyUpdateDnsRspDnsImpl<xpu>(param, ctx, weight.data(), grad, mean.data(),
+  ClipAdamLazyUpdateDnsRspDnsImpl<xpu>(param, ctx, weight.data(), grad, mean.data(),
                                    var.data(), auto_clip.data(), req, &out_blob);
 }
 
