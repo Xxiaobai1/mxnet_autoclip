@@ -16,4 +16,4 @@
 <!--- under the License. -->
 
 ## TODO: Add auto clip optimizer based on Adam
-# This repository is a modified version based on incubator\MXNET
+# This repository is a modified version based on MXNET
