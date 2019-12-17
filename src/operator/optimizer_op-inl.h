@@ -1566,7 +1566,7 @@ inline void AdamUpdateEx(const nnvm::NodeAttrs& attrs,
 struct ClipAdamUpdateKernel {
   template<typename DType>
   MSHADOW_XINLINE static void Map(int i, DType* out_data,
-    DType* mean_data, DType* var_data, const DType* weight_data, const DType* grad_data, DType* auto_clip_data,
+    DType* mean_data, DType* var_data, DType* auto_clip_data, const DType* weight_data, const DType* grad_data,
     const DType clip_gradient, const DType rescale_grad,
     const DType beta1, const DType beta2,
     const DType lr, const DType wd,
@@ -1608,7 +1608,7 @@ inline void ClipAdamUpdate(const nnvm::NodeAttrs& attrs,
     Tensor<xpu, 2, DType> out = outputs[0].FlatTo2D<xpu, DType>(s);
 
     Kernel<ClipAdamUpdateKernel, xpu>::Launch(s, weight.shape_.Size(),
-          out.dptr_, mean.dptr_, var.dptr_, weight.dptr_, grad.dptr_, auto_clip.dptr_, 
+          out.dptr_, mean.dptr_, var.dptr_, auto_clip.dptr_, weight.dptr_, grad.dptr_, 
           static_cast<DType>(param.clip_gradient), static_cast<DType>(param.rescale_grad),
           static_cast<DType>(param.beta1), static_cast<DType>(param.beta2),
           static_cast<DType>(param.lr), static_cast<DType>(param.wd),
@@ -1755,7 +1755,7 @@ inline void ClipAdamLazyUpdateRspImpl(const AdamParam& param,
                                   NDArray *out) {
   using namespace mxnet_op;
   using namespace rowsparse;
-  CheckAllRowsPresent(weight, "AdamUpdate", "weights");
+  CheckAllRowsPresent(weight, "ClipAdamUpdate", "weights");
   Stream<xpu>* s = ctx.get_stream<xpu>();
   // fill mean and variance with zero values in order to reuse the sgd mom dns impl
   if (mean.storage_type() == kRowSparseStorage && !mean.storage_initialized()) {

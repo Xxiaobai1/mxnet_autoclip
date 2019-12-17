@@ -127,6 +127,7 @@ inline float Optimizer::GetWD_(int index) {
 inline Optimizer* OptimizerRegistry::Find(const std::string& name) {
   if (cmap().empty()) {
     // Optimizers should only be registered once
+    MXNETCPP_REGISTER_OPTIMIZER(clipadam, ClipAdamOptimizer);
     MXNETCPP_REGISTER_OPTIMIZER(sgd, SGDOptimizer);
     MXNETCPP_REGISTER_OPTIMIZER(ccsgd, SGDOptimizer);  // For backward compatibility
     MXNETCPP_REGISTER_OPTIMIZER(rmsprop, RMSPropOptimizer);
@@ -486,6 +487,75 @@ inline void AdaDeltaOptimizer::CreateState_(int index, NDArray weight) {
   *acc_g_[index] = 0;
   acc_delta_[index] = new NDArray(weight.GetShape(), weight.GetContext());
   *acc_delta_[index] = 0;
+}
+
+inline ClipAdamOptimizer::ClipAdamOptimizer(unsigned begin_num_update)
+  : Optimizer(begin_num_update) {
+  update_handle_ = op_map()->GetSymbolCreator("clip_adam_update");
+  SetParam("beta1", 0.9f);
+  SetParam("beta2", 0.999f);
+  SetParam("epsilon", 1e-8);
+}
+
+inline std::string AdamOptimizer::GetType() const {
+  return "clipadam";
+}
+
+inline ClipAdamOptimizer::~ClipAdamOptimizer() {
+  for (auto &it : mean_) {
+    delete it.second;
+  }
+  for (auto &it : var_) {
+    delete it.second;
+  }
+  for (auto &it : auto_clip_) {
+    delete it.seconde;
+  }
+}
+
+inline void ClipAdamOptimizer::Update(int index, NDArray weight, NDArray grad) {
+  if (mean_.count(index) == 0) {
+    CreateState_(index, weight);
+  }
+
+  params_["lr"] = std::to_string(GetLR_(index));
+  params_["wd"] = std::to_string(GetWD_(index));
+  UpdateCount_(index);
+  auto keys = GetParamKeys_();
+  auto values = GetParamValues_();
+  CHECK_EQ(keys.size(), values.size());
+
+  float lr = std::stof(params_["lr"]);
+  float b1 = std::stof(params_["beta1"]);
+  float b2 = std::stof(params_["beta2"]);
+  float t = count_[index];
+  float coef1 = 1.0f - std::pow(b1, t);
+  float coef2 = 1.0f - std::pow(b2, t);
+  lr *= std::sqrt(coef2) / coef1;
+
+  NDArrayHandle inputs[5];
+  inputs[0] = weight.GetHandle();
+  inputs[1] = grad.GetHandle();
+
+  int num_outputs = 1;
+  NDArrayHandle output = weight.GetHandle();
+  NDArrayHandle *outputs = &output;
+
+  inputs[2] = mean_[index]->GetHandle();
+  inputs[3] = var_[index]->GetHandle();
+  inputs[4] = auto_clip_[index]->GetHandle();
+  MXImperativeInvoke(update_handle_, 5, inputs,
+    &num_outputs, &outputs,
+    keys.size(), keys.data(), values.data());
+}
+
+inline void ClipAdamOptimizer::CreateState_(int index, NDArray weight) {
+  mean_[index] = new NDArray(weight.GetShape(), weight.GetContext());
+  *mean_[index] = 0;
+  var_[index] = new NDArray(weight.GetShape(), weight.GetContext());
+  *var_[index] = 0;
+  auto_clip_[index] = new NDArray(weight.GetShape(), weight.GetContext());
+  *auto_clip_[index] = 0;
 }
 
 }  // namespace cpp

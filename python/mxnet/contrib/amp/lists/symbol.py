@@ -253,6 +253,7 @@ FP16_FP32_FUNCS = [
     'ceil',
     'choose_element_0index',
     'clip',
+    'clip_adam_update',
     'cos',
     'crop',
     'degrees',

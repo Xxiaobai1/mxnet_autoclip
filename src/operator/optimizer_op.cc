@@ -1130,10 +1130,10 @@ only the row slices whose indices appear in grad.indices are updated (for w, m a
     return std::vector<ResourceRequest>{ResourceRequest::kTempSpace};
   })
 .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<5, 1>)
-.set_attr<FInferStorageType>("FInferStorageType", StdOptStorageType<2, AdamParam>)
+.set_attr<FInferStorageType>("FInferStorageType", StdOptStorageType<3, AdamParam>)
 .set_attr<nnvm::FMutateInputs>("FMutateInputs",
   [](const nnvm::NodeAttrs& attrs) {
-    return std::vector<uint32_t>{2, 3};
+    return std::vector<uint32_t>{2, 3, 4};
   })
 .set_attr<FCompute>("FCompute<cpu>", ClipAdamUpdate<cpu>)
 .set_attr<FComputeEx>("FComputeEx<cpu>", ClipAdamUpdateEx<cpu>)

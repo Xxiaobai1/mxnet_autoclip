@@ -749,3 +749,7 @@ def mp_adamw_update(weight, grad, mean, var, weight32, rescale_grad, lr, eta, be
                                              beta1=beta1, beta2=beta2, epsilon=epsilon,
                                              wd=wd, clip_gradient=clip_gradient, out=out,
                                              name=name, **kwargs)
+
+def clip_adam_update(weight, grad, mean, var, auto_clip, out, lazy_update, lr, wd, **kwargs):
+    return symbol._internal.clip_adam_update(weight=weight, grad=grad, mean=mean, var=var, auto_clip=auto_clip, out=out,
+                                              lazy_update=lazy_update, lr=lr, wd=wd, **kwargs)

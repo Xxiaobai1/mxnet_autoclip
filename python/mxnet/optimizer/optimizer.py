@@ -35,7 +35,7 @@ from ..ndarray import (sgd_update, sgd_mom_update, adam_update, rmsprop_update, 
                        multi_mp_sgd_mom_update, preloaded_multi_sgd_update,
                        preloaded_multi_sgd_mom_update, preloaded_multi_mp_sgd_update,
                        preloaded_multi_mp_sgd_mom_update, lamb_update_phase1, lamb_update_phase2,
-                       mp_lamb_update_phase1, mp_lamb_update_phase2)
+                       mp_lamb_update_phase1, mp_lamb_update_phase2, clip_adam_update)
 from ..ndarray import sparse
 from ..random import normal
 from ..util import is_np_array
@@ -43,7 +43,7 @@ from ..util import is_np_array
 __all__ = [
     'AdaDelta', 'AdaGrad', 'Adam', 'Adamax', 'DCASGD', 'FTML', 'Ftrl', 'LARS', 'LBSGD',
     'NAG', 'NDabs', 'Nadam', 'Optimizer', 'RMSProp', 'SGD', 'SGLD', 'Signum', 'LAMB',
-    'Test', 'Updater', 'ccSGD', 'create', 'get_updater', 'register'
+    'Test', 'Updater', 'ccSGD', 'create', 'get_updater', 'register', 'ClipAdam'
 ]
 
 def _flatten_list(nested_list):
@@ -2052,8 +2052,6 @@ class ClipAdam(Optimizer):
         coef1 = 1. - self.beta1**t
         coef2 = 1. - self.beta2**t
         lr *= math.sqrt(coef2)/coef1
-
-        mean, var, auto_clip = state
         """
         operator doesn't support row sparse:
         
@@ -2077,9 +2075,7 @@ class ClipAdam(Optimizer):
             kwargs['clip_gradient'] = self.clip_gradient
 
         mean, var, auto_clip = state
-        clip_adam_update(weight, grad, mean, var, auto_clip, out=weight, \
-                         lazy_update=self.lazy_update, lr=lr, wd=wd, **kwargs)
-        
+        clip_adam_update(weight, grad, mean, var, auto_clip, out=weight, lazy_update=self.lazy_update, lr=lr, wd=wd, **kwargs)
 
 
 @register
